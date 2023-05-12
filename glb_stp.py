@@ -9,8 +9,16 @@ from ryu.controller.ofp_event import EventOFPMsgBase
 from ryu.topology.api import get_switch, get_link
 from ryu.lib import dpid as dpid_lib
 from ryu.topology.switches import Link
-from genetic_pathfinder.python_graph import Graph
-from genetic_pathfinder.baseline_algorithms import dijkstra
+
+import sys
+import os
+sys.path.append(os.path.dirname(os.path.expanduser('~/py/genetic-pathfinder/baseline_algorithms.py')))
+sys.path.append(os.path.dirname(os.path.expanduser('~/py/genetic-pathfinder/python_graph.py')))
+from baseline_algorithms import dijkstra
+from python_graph import Graph
+
+# from genetic_pathfinder.python_graph import Graph
+# from genetic_pathfinder.baseline_algorithms import dijkstra
 
 
 def output_packet_port(msg, dp, port):
