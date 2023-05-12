@@ -27,6 +27,40 @@ def output_packet_port(msg, dp, port):
     dp.send_msg(out)
 
 
+def build_link_tree(links: list[tuple[int, int, dict]]):
+    """ Create hash map of the links and their metrics """
+    link_tree = {}
+    for link in links:
+        link_tree.setdefault(link[0], {})
+        link_tree[link[0]].setdefault(link[1], [])
+        link_tree[link[0]][link[1]].append(link[2])
+    return link_tree
+
+
+def install_ports_to_path(path: list[int], src_port: int, dst_port: int, link_tree) \
+        -> list[tuple[int, int, int]] or None:
+    """ Choose links with the best bandwidth and install corresponding ports to every switch in the path """
+    ported_path = []
+
+    if len(path) < 1:
+        return None
+    if len(path) < 2:
+        return [(path[0], src_port, dst_port)]
+    print('path =', path)
+    first_sw = (path[0], src_port, link_tree[path[0]][path[1]][0]['port'])
+    ported_path.append(first_sw)
+    for idx in range(1, len(path) - 1):
+        prev_sw = path[idx-1]
+        curr_sw = path[idx]
+        next_sw = path[idx+1]
+        ported_sw = (curr_sw, link_tree[curr_sw][prev_sw][0]['port'], link_tree[curr_sw][next_sw][0]['port'])
+        ported_path.append(ported_sw)
+    last_sw = (path[-1], link_tree[path[-1]][path[-2]][0]['port'], dst_port)
+    ported_path.append(last_sw)
+
+    return ported_path
+
+
 class GeneticSwitch(simple_switch_stp_13.SimpleSwitch13):
     def __init__(self, *args, **kwargs):
         super(GeneticSwitch, self).__init__(*args, **kwargs)
@@ -82,37 +116,6 @@ class GeneticSwitch(simple_switch_stp_13.SimpleSwitch13):
         graph = Graph(num_nodes, edges, is_directed=True)
         return graph
 
-    def build_link_tree(self, links: list[tuple[int, int, dict]]):
-        link_tree = {}
-        for link in links:
-            link_tree.setdefault(link[0], {})
-            link_tree[link[0]].setdefault(link[1], [])
-            link_tree[link[0]][link[1]].append(link[2]['port'])
-        return link_tree
-
-    def install_ports_to_path(self, path: list[int], src_port: int, dst_port: int, link_tree) \
-            -> list[tuple[int, int, int]] or None:
-        """ Choose links with the best bandwidth and install corresponding ports to every switch in the path """
-        ported_path = []
-
-        if len(path) < 1:
-            return None
-        if len(path) < 2:
-            return [(path[0], src_port, dst_port)]
-        print('path =', path)
-        first_sw = (path[0], src_port, link_tree[path[0]][path[1]][0])
-        ported_path.append(first_sw)
-        for idx in range(1, len(path) - 1):
-            prev_sw = path[idx-1]
-            curr_sw = path[idx]
-            next_sw = path[idx+1]
-            ported_sw = (curr_sw, link_tree[curr_sw][prev_sw][0], link_tree[curr_sw][next_sw][0])
-            ported_path.append(ported_sw)
-        last_sw = (path[-1], link_tree[path[-1]][path[-2]][0], dst_port)
-        ported_path.append(last_sw)
-
-        return ported_path
-
     def find_path(self, src_dpid, src_port, dst_dpid, dst_port):
         self.logger.info("Finding path {}.p{} -> {}.p{}".format(src_dpid, src_port,
                                                                 dst_dpid, dst_port))
@@ -124,12 +127,12 @@ class GeneticSwitch(simple_switch_stp_13.SimpleSwitch13):
         self.graph = self.create_mapped_graph(switches, links)
         # print(self.switch_to_idx)
         # print(self.graph)
-        link_tree = self.build_link_tree(links)
+        link_tree = build_link_tree(links)
         print(link_tree)
 
         idx_path = dijkstra(self.graph.data, self.switch_to_idx[src_dpid], self.switch_to_idx[dst_dpid])[0]
         path = [switches[idx] for idx in idx_path]
-        path = self.install_ports_to_path(path, src_port, dst_port, link_tree)
+        path = install_ports_to_path(path, src_port, dst_port, link_tree)
         print('ported path =', path)
 
         return path
