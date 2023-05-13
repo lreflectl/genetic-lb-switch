@@ -104,12 +104,10 @@ class GLBSwitch(app_manager.RyuApp):
                 return
             self.link_tree = build_link_tree(links)
             remove_cycles(self.link_tree)  # Delete node-to-same-node connections
-            # Create copy of the link tree for STP algorithm
-            link_tree_copy = self.link_tree.copy()
-            remove_identical_links(link_tree_copy)
-            self.spanning_tree = build_spanning_tree(link_tree_copy, switches, dpid)
+            remove_identical_links(self.link_tree)  # Pick the best link among each two nodes
+            self.spanning_tree = build_spanning_tree(self.link_tree, switches, dpid)
             if self.spanning_tree is not None:
-                set_reverse_links(self.spanning_tree, link_tree_copy)
+                set_reverse_links(self.spanning_tree, self.link_tree)
 
     def get_topology_data(self):
         """ Retrieve switches and links of the topology """
@@ -119,7 +117,7 @@ class GLBSwitch(app_manager.RyuApp):
         links = [  # todo: get length by api for ports
             (link.src.dpid, link.dst.dpid, {'port': link.src.port_no, 'length': 1}) for link in link_list
         ]
-        self.logger.info('switches: {}, links: {}'.format(switches, links))
+        # self.logger.info('switches: {}, links: {}'.format(switches, links))
         return switches, links
 
     def pathfinder(self, ev):
@@ -154,6 +152,7 @@ class GLBSwitch(app_manager.RyuApp):
         output_packet_port(msg, get_switch(self, dst_dpid)[0].dp, dst_port)
 
     def find_path(self, src_dpid, src_port, dst_dpid, dst_port):
+        """ Using routing algorithm find a path from src to dst and install ports to it """
         self.logger.info(f"Finding path from dp {src_dpid} to dp {dst_dpid} on port {dst_port}")
 
         if src_dpid == dst_dpid:
@@ -165,8 +164,7 @@ class GLBSwitch(app_manager.RyuApp):
         idx_path = dijkstra(self.topology_graph.data, self.switch_to_idx[src_dpid], self.switch_to_idx[dst_dpid])[0]
 
         path = [self.switches[idx] for idx in idx_path]
-        path = install_ports_to_path(path, src_port, dst_port, link_tree)
-        print('ported path =', path)
+        path = install_ports_to_path(path, src_port, dst_port, self.link_tree)
         return path
 
     def setup_topology_graph(self):
@@ -174,10 +172,13 @@ class GLBSwitch(app_manager.RyuApp):
         if self.topology_graph is None or self.link_tree is None:
             self.switches, links = self.get_topology_data()
             self.link_tree = build_link_tree(links)
-            remove_cycles(self.link_tree)
+            remove_cycles(self.link_tree)  # Delete node-to-same-node connections
+            remove_identical_links(self.link_tree)  # Pick the best link among each two nodes
             self.topology_graph = self.create_mapped_graph(self.switches, links)
 
     def create_mapped_graph(self, switches: list[int], links: list[tuple[int, int, dict]]) -> Graph:
+        """ Map dpid`s to their indexes, then create a graph of the indexes to use it with my routing algorithms.
+            Including genetic algorithm.  """
         num_nodes = len(switches)
         length = 1
         self.switch_to_idx = {switches[idx]: idx for idx in range(num_nodes)}
@@ -185,3 +186,29 @@ class GLBSwitch(app_manager.RyuApp):
         graph = Graph(num_nodes, edges, is_directed=True)
         return graph
 
+    def install_path(self, path, src, dst):
+        """ Take ported path and install flows to every switch in the path from src_port to dst_port, for
+            every packet from src to dst which comes on the specified in_port. """
+        for dpid, in_port, out_port in path:
+            sw = get_switch(self, dpid)[0]
+            dp = sw.dp
+            ofp = dp.ofproto
+            ofp_parser = dp.ofproto_parser
+
+            # Create match for a packet
+            match = ofp_parser.OFPMatch(in_port=in_port, dl_dst=haddr_to_bin(dst), dl_src=haddr_to_bin(src))
+
+            # Define actions, which will be applied for the packet, which is matched
+            actions = [ofp_parser.OFPActionOutput(out_port)]
+
+            # Create Flow
+            mod = ofp_parser.OFPFlowMod(
+                datapath=dp, match=match, actions=actions,
+                idle_timeout=0, hard_timeout=0, cookie=0,
+                priority=ofp.OFP_DEFAULT_PRIORITY, command=ofp.OFPFC_ADD,
+                flags=ofp.OFPFF_SEND_FLOW_REM)
+
+            # Send message to switch to install this Flow
+            dp.send_msg(mod)
+
+        self.logger.info("Successfully installed path!")
