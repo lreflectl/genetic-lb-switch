@@ -12,10 +12,14 @@ from ryu.topology.switches import Link
 
 import sys
 import os
+sys.path.append(os.path.dirname(os.path.expanduser('~/py/genetic-pathfinder/genetic_algorithm.py')))
 sys.path.append(os.path.dirname(os.path.expanduser('~/py/genetic-pathfinder/baseline_algorithms.py')))
+sys.path.append(os.path.dirname(os.path.expanduser('~/py/genetic-pathfinder/stp_algorithm.py')))
 sys.path.append(os.path.dirname(os.path.expanduser('~/py/genetic-pathfinder/python_graph.py')))
 from baseline_algorithms import dijkstra
 from python_graph import Graph
+from genetic_algorithm import genetic
+# from stp_algorithm import build_link_tree, build_spanning_tree
 
 # from genetic_pathfinder.python_graph import Graph
 # from genetic_pathfinder.baseline_algorithms import dijkstra

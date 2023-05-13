@@ -162,7 +162,7 @@ class Hw9Switch(app_manager.RyuApp):
 
         # Parse the packet to get the Ethernet dst and src
         pkt = packet.Packet(msg.data)
-        eth = pkt.get_protocols(ethernet.ethernet)[0]
+        eth = pkt.get_protocol(ethernet.ethernet)
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
             # Ignore LLDPPackets used for topology discovery
             return
