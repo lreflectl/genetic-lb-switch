@@ -11,7 +11,7 @@ def output_packet_port(msg, dp, port):
     dp.send_msg(out)
 
 
-def install_ports_to_path(path: list[int], src_port: int, dst_port: int, link_tree) \
+def install_ports_to_path(path: list[int], src_port: int, dst_port: int, link_tree: dict[int, dict[int, dict]]) \
         -> list[tuple[int, int, int]] or None:
     """ Choose links with the best bandwidth and install corresponding ports to every switch in the path """
     ported_path = []

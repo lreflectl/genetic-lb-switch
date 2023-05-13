@@ -31,6 +31,8 @@ class GLBSwitch(app_manager.RyuApp):
         super(GLBSwitch, self).__init__(*args, **kwargs)
         self.mac_to_switch_port = {}
         self.topology_graph = None
+        self.switch_to_idx = {}
+        self.switches = []
         self.link_tree = None
         self.spanning_tree = None
 
@@ -51,15 +53,15 @@ class GLBSwitch(app_manager.RyuApp):
         self.logger.info(f"Packet in port {in_port} of switch {dpid} ({src} to {dst})")
 
         # Saving only the first switch that has got a packet, as it is directly connected to the host
-        # if src not in self.mac_to_switch_port:
-        #     self.mac_to_switch_port[src] = (dpid, in_port)
+        if src not in self.mac_to_switch_port:
+            self.mac_to_switch_port[src] = (dpid, in_port)
 
         # Fall back on broadcasting by STP algorithm if destination is unknown
         if dst not in self.mac_to_switch_port:
             return self.broadcast_stp(ev)
 
         # If destination is known, then build a route with genetic algorithm
-        # self.pathfinder(ev)
+        self.pathfinder(ev)
 
     def broadcast_stp(self, ev):
         """ Send packet on all ports defined in spanning tree (to avoid loops like with default flooding) """
@@ -76,9 +78,9 @@ class GLBSwitch(app_manager.RyuApp):
         stp_forbidden_ports = set()
         if dpid in self.spanning_tree:
             # Collect all allowed by stp ports of the switch
-            stp_allowed_ports = {metrics['port'] for dst_node, metrics in self.spanning_tree[dpid]}
-            # Collect all ports of link tree (stp allowed and forbiden)
-            all_link_tree_ports = {metrics['port'] for dst_node, metrics in self.link_tree[dpid]}
+            stp_allowed_ports = {metrics['port'] for dst_node, metrics in self.spanning_tree[dpid].items()}
+            # Collect all ports of link tree (stp allowed and forbidden)
+            all_link_tree_ports = {metrics['port'] for dst_node, metrics in self.link_tree[dpid].items()}
             stp_forbidden_ports = all_link_tree_ports.difference(stp_allowed_ports)
 
         always_skip_ports = {msg.in_port, ofp.OFPP_LOCAL}
@@ -87,7 +89,6 @@ class GLBSwitch(app_manager.RyuApp):
 
         # Remove all except hosts and stp allowed ports
         allowed_ports = all_ports.difference(stp_forbidden_ports).difference(always_skip_ports)
-
         # Send the packet to all allowed ports on the switch
         for port_id in allowed_ports:
             output_packet_port(msg, dp, port_id)
@@ -115,7 +116,9 @@ class GLBSwitch(app_manager.RyuApp):
         switch_list = get_switch(self, None)
         switches = [switch.dp.id for switch in switch_list]
         link_list = get_link(self, None)
-        links = [(link.src.dpid, link.dst.dpid, {'port': link.src.port_no}) for link in link_list]
+        links = [  # todo: get length by api for ports
+            (link.src.dpid, link.dst.dpid, {'port': link.src.port_no, 'length': 1}) for link in link_list
+        ]
         self.logger.info('switches: {}, links: {}'.format(switches, links))
         return switches, links
 
@@ -134,18 +137,51 @@ class GLBSwitch(app_manager.RyuApp):
         dst_dpid, dst_port = self.mac_to_switch_port[dst]
 
         # Find a path with installed ports: [(switch id, in port, out port), ...]
-        fwd_path = self.find_path(src_dpid, src_port, dst_dpid, dst_port)
-        if fwd_path is not None:
-            self.install_path(fwd_path, src, dst)
+        forward_path = self.find_path(src_dpid, src_port, dst_dpid, dst_port)
+        if forward_path is not None:
+            self.install_path(forward_path, src, dst)
         else:
             self.logger.warn("Unable to find path! Topology is not connected!")
 
         # Build and install the reverse path for future response packets
-        rev_path = self.find_path(dst_dpid, dst_port, src_dpid, src_port)
-        if rev_path is not None:
-            self.install_path(rev_path, dst, src)
+        reverse_path = self.find_path(dst_dpid, dst_port, src_dpid, src_port)
+        if reverse_path is not None:
+            self.install_path(reverse_path, dst, src)
         else:
             self.logger.warn("Unable to find path! Topology is not connected!")
 
         # Send packet on dst_port of destination switch (following packets will use installed flow path)
         output_packet_port(msg, get_switch(self, dst_dpid)[0].dp, dst_port)
+
+    def find_path(self, src_dpid, src_port, dst_dpid, dst_port):
+        self.logger.info(f"Finding path from dp {src_dpid} to dp {dst_dpid} on port {dst_port}")
+
+        if src_dpid == dst_dpid:
+            # if source and destination are the same switch
+            return [(src_dpid, src_port, dst_port)]
+
+        self.setup_topology_graph()
+
+        idx_path = dijkstra(self.topology_graph.data, self.switch_to_idx[src_dpid], self.switch_to_idx[dst_dpid])[0]
+
+        path = [self.switches[idx] for idx in idx_path]
+        path = install_ports_to_path(path, src_port, dst_port, link_tree)
+        print('ported path =', path)
+        return path
+
+    def setup_topology_graph(self):
+        """ Create graph, link_tree, switch_to_idx and switches if needed """
+        if self.topology_graph is None or self.link_tree is None:
+            self.switches, links = self.get_topology_data()
+            self.link_tree = build_link_tree(links)
+            remove_cycles(self.link_tree)
+            self.topology_graph = self.create_mapped_graph(self.switches, links)
+
+    def create_mapped_graph(self, switches: list[int], links: list[tuple[int, int, dict]]) -> Graph:
+        num_nodes = len(switches)
+        length = 1
+        self.switch_to_idx = {switches[idx]: idx for idx in range(num_nodes)}
+        edges = [(self.switch_to_idx[source], self.switch_to_idx[dest], length) for source, dest, metrics in links]
+        graph = Graph(num_nodes, edges, is_directed=True)
+        return graph
+
