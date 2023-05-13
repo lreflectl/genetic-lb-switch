@@ -35,7 +35,7 @@ class GLBSwitch(app_manager.RyuApp):
         self.spanning_tree = None
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
-    def _packet_in_handler(self):
+    def _packet_in_handler(self, ev):
         pkt = packet.Packet(ev.msg.data)
         eth = pkt.get_protocols(ethernet.ethernet)[0]
 
@@ -51,69 +51,64 @@ class GLBSwitch(app_manager.RyuApp):
         self.logger.info(f"Packet in port {in_port} of switch {dpid} ({src} to {dst})")
 
         # Saving only the first switch that has got a packet, as it is directly connected to the host
-        if src not in self.mac_to_switch_port:
-            self.mac_to_switch_port[src] = (dpid, in_port)
+        # if src not in self.mac_to_switch_port:
+        #     self.mac_to_switch_port[src] = (dpid, in_port)
 
         # Fall back on broadcasting by STP algorithm if destination is unknown
         if dst not in self.mac_to_switch_port:
             return self.broadcast_stp(ev)
 
         # If destination is known, then build a route with genetic algorithm
-        self.pathfinder(ev)
+        # self.pathfinder(ev)
 
     def broadcast_stp(self, ev):
         """ Send packet on all ports defined in spanning tree (to avoid loops like with default flooding) """
-        self.setup_spanning_tree()
-        if self.spanning_tree is None:
-            self.logger.warn("Can not build spanning tree! Topology is not connected!")
-            return
-
         msg = ev.msg
         dp = msg.datapath
         ofp = dp.ofproto
-        ofp_parser = dp.ofproto_parser
+        dpid = dp.id
 
-        # This will show you that the switch is connecting via OpenFlow v1.0.
-        # See ryu/ryu/ofproto/ofproto_v1_0.py for more information.
-        # self.logger.info(ofp, ofp.OFP_VERSION)
+        self.setup_spanning_tree(dpid)
+        if self.spanning_tree is None:
+            self.logger.warn("Cannot build spanning tree! Topology is not connected!")
+            return
 
-        # Get the ports that the packet should not be broadcast on.  This
-        # includes the switch's local port, the input port, and any port that
-        # is not in the spanning tree on the appropriate ports
-        always_skip_ports = [msg.in_port, ofp.OFPP_LOCAL]
-        #
-        # HW9TODO: Add in the ports that are not in the spanning tree for this
-        # switch
-        #
-        spanning_tree_skip_ports = []  # TODO
-        skip_port_set = set(always_skip_ports + spanning_tree_skip_ports)
+        stp_forbidden_ports = set()
+        if dpid in self.spanning_tree:
+            # Collect all allowed by stp ports of the switch
+            stp_allowed_ports = {metrics['port'] for dst_node, metrics in self.spanning_tree[dpid]}
+            # Collect all ports of link tree (stp allowed and forbiden)
+            all_link_tree_ports = {metrics['port'] for dst_node, metrics in self.link_tree[dpid]}
+            stp_forbidden_ports = all_link_tree_ports.difference(stp_allowed_ports)
 
-        # For every port not being skipped, send the packet out that port.
-        # Note: it is crucially important to flood out the ports that an
-        # end-host is connected to
-        # Note: When the packet is buffered at the switch, buffer_id can only be
-        # used once.  Because of this, we use the packet data in the PacketIn.
-        # Note: However, it is not required for switches to include the entire
-        # packet as data, so even this simple function is not guaranteed to be
-        # correct. OFPC could be used to ensure correctness, but that is
-        # outside the scope of this homework.
+        always_skip_ports = {msg.in_port, ofp.OFPP_LOCAL}
+        # Get all ports (stp allowed + forbidden + hosts + local)
+        all_ports = set(dp.ports.keys())
 
-        for port_num, port in dp.ports.items():
-            if port_num not in skip_port_set:
-                output_packet_port(msg, dp, port_num)
+        # Remove all except hosts and stp allowed ports
+        allowed_ports = all_ports.difference(stp_forbidden_ports).difference(always_skip_ports)
 
-    def setup_spanning_tree(self):
+        # Send the packet to all allowed ports on the switch
+        for port_id in allowed_ports:
+            output_packet_port(msg, dp, port_id)
+
+    def setup_spanning_tree(self, dpid):
         """ Get topology data, create link tree if needed, build spanning tree  """
         # If link_tree is None, then spanning_tree need an update
         if self.link_tree is None or self.spanning_tree is None:
             switches, links = self.get_topology_data()
+            if len(switches) == 1:
+                # If it is a single node, no topology links (except hosts)
+                self.link_tree, self.spanning_tree = {}, {}
+                return
             self.link_tree = build_link_tree(links)
             remove_cycles(self.link_tree)  # Delete node-to-same-node connections
             # Create copy of the link tree for STP algorithm
             link_tree_copy = self.link_tree.copy()
             remove_identical_links(link_tree_copy)
-            self.spanning_tree = build_spanning_tree(link_tree_copy)
-            set_reverse_links(self.spanning_tree, link_tree_copy)
+            self.spanning_tree = build_spanning_tree(link_tree_copy, switches, dpid)
+            if self.spanning_tree is not None:
+                set_reverse_links(self.spanning_tree, link_tree_copy)
 
     def get_topology_data(self):
         """ Retrieve switches and links of the topology """
@@ -121,7 +116,7 @@ class GLBSwitch(app_manager.RyuApp):
         switches = [switch.dp.id for switch in switch_list]
         link_list = get_link(self, None)
         links = [(link.src.dpid, link.dst.dpid, {'port': link.src.port_no}) for link in link_list]
-        # self.logger.info('switches: {}, links: {}'.format(switches, links))
+        self.logger.info('switches: {}, links: {}'.format(switches, links))
         return switches, links
 
     def pathfinder(self, ev):
