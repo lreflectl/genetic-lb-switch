@@ -161,8 +161,18 @@ class GLBSwitch(app_manager.RyuApp):
 
         self.setup_topology_graph()
 
-        idx_path = dijkstra(self.topology_graph.data, self.switch_to_idx[src_dpid], self.switch_to_idx[dst_dpid])[0]
+        # Setup parameters for GA
+        population_size = round(len(self.switches) * 1.5)
+        # Using genetic algorithm to find optimal path
+        idx_path = genetic(
+            self.topology_graph.data, self.switch_to_idx[src_dpid], self.switch_to_idx[dst_dpid],
+            population_size=population_size,
+        )
 
+        # Using Dijkstra's algorithm for comparison
+        # idx_path = dijkstra(self.topology_graph.data, self.switch_to_idx[src_dpid], self.switch_to_idx[dst_dpid])[0]
+
+        # Convert indexed path back to dpids
         path = [self.switches[idx] for idx in idx_path]
         path = install_ports_to_path(path, src_port, dst_port, self.link_tree)
         return path
