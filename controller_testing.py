@@ -1,14 +1,9 @@
 import fnss
-import networkx as nx
 from mininet.net import Mininet
 from mininet.link import TCLink
 from mininet.node import RemoteController, Host
 from mininet.log import setLogLevel, lg
-from threading import Thread
-import asyncio
-import csv
 import time
-import random
 
 
 def measure_jitter(h1: Host, h2: Host):
@@ -27,16 +22,16 @@ def measure_jitter(h1: Host, h2: Host):
 
 def main():
     # Create Fat-Tree topo with 4 pods (16 hosts)
-    fnss_topo = fnss.fat_tree_topology(k=4)
+    fnss_topo = fnss.fat_tree_topology(k=4)  # 2 pods while test
 
-    fnss.set_delays_constant(fnss_topo, 2.6, 'ms')
-    fnss.set_capacities_constant(fnss_topo, 65, 'Mbps')
+    fnss.set_delays_constant(fnss_topo, 2, 'ms')
+    fnss.set_capacities_constant(fnss_topo, 100, 'Mbps')
     # link_types = nx.get_edge_attributes(fnss_topo, 'type')
     # core_agg_links = [link for link in link_types
     #                   if link_types[link] == 'core_aggregation']
     # fnss.set_capacities_random_uniform(fnss_topo, list(range(90, 100)), 'Mbps')
 
-    fnss.set_buffer_sizes_constant(fnss_topo, 100, 'packets')
+    fnss.set_buffer_sizes_constant(fnss_topo, 50, 'packets')
 
     # Convert topo to Mininet and change nodes labels
     mininet_topo = fnss.to_mininet(fnss_topo, relabel_nodes=True)
@@ -48,21 +43,22 @@ def main():
     # Wait for the controller
     input('Press any key when controller is ready')
 
+    h1, h16 = net.hosts[0], net.hosts[15]
     server_hosts = net.hosts[8:15]
     client_hosts = net.hosts[1:8]
     for server_host in server_hosts:
         server_host.sendCmd('iperf -s -u')
+        time.sleep(0.2)
     server_id = 9
     for client_host in client_hosts:
         client_host.sendCmd(f'iperf -c 10.0.0.{server_id} -u -t 9999 -b 50M -d -y C')
-        # client_host.cmdPrint(f'iperf -c 10.0.0.{server_id} -u -t 3 -b 100M')
         server_id += 1
+        time.sleep(0.2)
 
     lg.info('Traffic generation started\n')
     input('Press any key to proceed')
 
-    h1, h16 = net.hosts[0], net.hosts[15]
-    with open('results.csv', 'w') as file:
+    with open('results/results.csv', 'w') as file:
         start_time = time.time()
         file.write('time, bw_mbits, jitter_ms, latency_ms\n')
         for i in range(40):
@@ -72,7 +68,7 @@ def main():
             result_bws = net.iperf((h1, h16), seconds=3)
             server_bw = float(result_bws[0].split(' ')[0])
             client_bw = float(result_bws[1].split(' ')[0])
-            bw_mbits = min(server_bw, client_bw) + random.randint(0, 10)
+            bw_mbits = min(server_bw, client_bw)
             file.write(str(bw_mbits) + ',')
             lg.info('Iperf tcp results: ')
             lg.info(bw_mbits)
