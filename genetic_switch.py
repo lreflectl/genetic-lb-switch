@@ -4,6 +4,7 @@ from ryu.controller.handler import MAIN_DISPATCHER
 from ryu.controller.handler import set_ev_cls
 from ryu.ofproto import ofproto_v1_0
 from ryu.topology.api import get_switch, get_link
+from ryu.topology.switches import Link
 from ryu.lib.mac import haddr_to_bin
 from ryu.lib.packet import packet
 from ryu.lib.packet import ethernet
@@ -117,7 +118,7 @@ class GLBSwitch(app_manager.RyuApp):
         links = [  # todo: get length by api for ports
             (link.src.dpid, link.dst.dpid, {'port': link.src.port_no, 'length': 1}) for link in link_list
         ]
-        # self.logger.info('switches: {}, links: {}'.format(switches, links))
+        # self.logger.info(f' switches: {switches}, links: {links}')
         return switches, links
 
     def pathfinder(self, ev):
