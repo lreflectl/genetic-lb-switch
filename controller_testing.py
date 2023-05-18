@@ -22,7 +22,7 @@ def measure_jitter(h1: Host, h2: Host):
 
 def main():
     # Create Fat-Tree topo with 4 pods (16 hosts)
-    fnss_topo = fnss.fat_tree_topology(k=4)  # 2 pods while test
+    fnss_topo = fnss.fat_tree_topology(k=4)
 
     fnss.set_delays_constant(fnss_topo, 2, 'ms')
     fnss.set_capacities_constant(fnss_topo, 100, 'Mbps')
